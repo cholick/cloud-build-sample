@@ -1,0 +1,8 @@
+
+/**/tmp/*
+!deployment/docker/tmp/.gitkeep
+
+/main
+/tmp
+
+vendor/

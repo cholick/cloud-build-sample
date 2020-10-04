@@ -1,0 +1,69 @@
+images: [ 'gcr.io/${PROJECT_ID}/cbt:${REVISION_ID}' ]
+
+steps:
+- id: unit-test
+  name: "golang:1.15"
+  env: [ 'GO111MODULE=on' ]
+  args: [ 'make', 'test' ]
+
+- id: build-binary
+  name: "golang:1.15"
+  env: [ 'GO111MODULE=on' ]
+  args: [ 'make', 'build-linux' ]
+  waitFor: [ '-' ]
+
+- id: helm-lint
+  name: 'gcr.io/$PROJECT_ID/helm-builder'
+  args: [ 'lint', 'deployment/cbt', '--strict' ]
+  waitFor: [ '-' ]
+  env: [ 'SKIP_CLUSTER_CONFIG=true' ]
+
+- id: go-lint
+  name: "golangci/golangci-lint:v1.31"
+  args: [ 'golangci-lint', 'run', './...','--enable', 'gocritic,testpackage' ]
+  waitFor: [ '-' ]
+
+- id: build-image
+  name: 'docker'
+  args: [
+      'build', 'deployment/docker',
+      '-t', 'gcr.io/$PROJECT_ID/cbt:$REVISION_ID',
+      "--label", "org.opencontainers.image.revision=${REVISION_ID}",
+  ]
+
+- id: push-image
+  name: 'gcr.io/cloud-builders/docker'
+  args: [ 'push', 'gcr.io/${PROJECT_ID}/cbt:${REVISION_ID}' ]
+
+- id: install-dev
+  name: 'gcr.io/$PROJECT_ID/helm-builder'
+  args: [
+      'upgrade', 'cbt-dev', 'deployment/cbt', '--install',
+      '--wait', '--timeout', '1m',
+      '--namespace', 'dev', '--create-namespace',
+      '-f', 'deployment/values-staging.yaml',
+      '--set', 'image.repository=gcr.io/$PROJECT_ID/cbt',
+      '--set', 'image.tag=${REVISION_ID}',
+  ]
+  env: [
+      'CLOUDSDK_COMPUTE_ZONE=us-central1-b',
+      'CLOUDSDK_CONTAINER_CLUSTER=hello-cloudbuild',
+    # 'DEBUG=true',
+  ]
+
+- id: prep-e2e
+  name: 'python:3.8-slim'
+  args: [
+      'pip', 'install',
+      '--target', '/workspace/lib',
+      '--requirement', '/workspace/test/requirements.txt'
+  ]
+
+- id: e2e
+  name: 'python:3.8-slim'
+  args: [
+      'python', '-m', 'unittest', 'discover',
+      '--start-directory', 'test',
+      '--pattern', '*_test.py'
+  ]
+  env: [ "PYTHONPATH=/workspace/lib" ]
